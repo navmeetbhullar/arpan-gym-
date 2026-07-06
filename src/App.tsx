@@ -1818,8 +1818,8 @@ export default function App() {
   };
 
   // --- Calculations for UI ---
-  const activeWorkoutPlan = workoutPlans.find(p => p.id === currentMember.workoutPlanId) || workoutPlans[0];
-  const activeDietPlan = dietPlans.find(d => d.id === currentMember.dietPlanId) || dietPlans[0];
+  const activeWorkoutPlan = workoutPlans.find(p => p.id === currentMember?.workoutPlanId) || workoutPlans[0];
+  const activeDietPlan = dietPlans.find(d => d.id === currentMember?.dietPlanId) || dietPlans[0];
 
   // Exercises checklist for ONLY today (simulate getting matching day e.g. Friday)
   const currentDayName = new Date().toLocaleDateString([], { weekday: "long" }); // e.g. Friday
