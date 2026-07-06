@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "Member": {
+      "title": "Member",
+      "description": "A gym member profile including attendance, current plans, and tier.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "avatar": { "type": "string" },
+        "status": { "type": "string" },
+        "role": { "type": "string" },
+        "planName": { "type": "string" },
+        "planPrice": { "type": "string" },
+        "gymId": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "joinDate": { "type": "string" },
+        "attendanceCount": { "type": "number" },
+        "attendanceHistory": { "type": "array" }
+      }
+    },
+    "GymAnnouncement": {
+      "title": "GymAnnouncement",
+      "description": "Gym wide announcement post.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "date": { "type": "string" },
+        "author": { "type": "string" },
+        "tag": { "type": "string" }
+      }
+    },
+    "GymNotification": {
+      "title": "GymNotification",
+      "description": "Notification alert for admin or member.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "time": { "type": "string" },
+        "read": { "type": "boolean" },
+        "forAdmin": { "type": "boolean" }
+      }
+    },
+    "PlanChangeRequest": {
+      "title": "PlanChangeRequest",
+      "description": "A request by a member to switch plans.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberName": { "type": "string" },
+        "currentPlanName": { "type": "string" },
+        "requestedPlanName": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
+    "WorkoutPlan": {
+      "title": "WorkoutPlan",
+      "description": "Gym workout training plan.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "target": { "type": "string" },
+        "difficulty": { "type": "string" },
+        "schedule": { "type": "object" }
+      }
+    },
+    "DietPlan": {
+      "title": "DietPlan",
+      "description": "Gym diet nutrition plan.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "calories": { "type": "string" },
+        "protein": { "type": "string" },
+        "carbs": { "type": "string" },
+        "fat": { "type": "string" },
+        "meals": { "type": "array" }
+      }
+    }
+  },
+  "firestore": {
+    "members": {
+      "schema": "Member",
+      "description": "Collection of all members"
+    },
+    "announcements": {
+      "schema": "GymAnnouncement",
+      "description": "Gym broad-cast posts"
+    },
+    "notifications": {
+      "schema": "GymNotification",
+      "description": "Administrative and user notification stream"
+    },
+    "planRequests": {
+      "schema": "PlanChangeRequest",
+      "description": "Membership subscription adjustment requests"
+    },
+    "workoutPlans": {
+      "schema": "WorkoutPlan",
+      "description": "Customizable workout regimes"
+    },
+    "dietPlans": {
+      "schema": "DietPlan",
+      "description": "Customizable nutrition sheets"
+    }
+  }
+}
