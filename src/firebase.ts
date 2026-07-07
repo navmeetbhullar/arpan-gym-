@@ -15,13 +15,12 @@ import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { Member, GymAnnouncement, GymNotification, PlanChangeRequest, WorkoutPlan, DietPlan } from "./types";
 
 const firebaseConfig = {
-  projectId: "bamboo-enterprise-3gtt6",
-  appId: "1:562256145565:web:a7b6c860af24c9a783b874",
-  apiKey: "AIzaSyCsv5j7VrnvsL0Rs-cR0V63g5teXNfuq0Y",
-  authDomain: "bamboo-enterprise-3gtt6.firebaseapp.com",
-  firestoreDatabaseId: "ai-studio-arpangymdashboar-1ab20172-e509-43d2-b0eb-321a85b03d6d",
-  storageBucket: "bamboo-enterprise-3gtt6.firebasestorage.app",
-  messagingSenderId: "562256145565",
+  apiKey: "AIzaSyAp4NDkbtFi-S6wBew0Iv5KW3XihYgKZvo",
+  authDomain: "arpan-gym-fitness.firebaseapp.com",
+  projectId: "arpan-gym-fitness",
+  storageBucket: "arpan-gym-fitness.firebasestorage.app",
+  messagingSenderId: "480284459138",
+  appId: "1:480284459138:web:ec2caf747bdb81186bf49b"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -31,8 +30,7 @@ export const db = initializeFirestore(
     localCache: persistentLocalCache({
       tabManager: persistentMultipleTabManager(),
     }),
-  },
-  firebaseConfig.firestoreDatabaseId
+  }
 );
 
 export const auth = getAuth(app);
