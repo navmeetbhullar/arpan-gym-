@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { Member } from "../types";
 import { 
-  QrCode, 
   Copy, 
   Check, 
   MessageSquare, 
@@ -129,40 +128,6 @@ export default function BoardingPass({
                 <span className={`text-xs font-mono font-bold ${member.status === "Expiring Soon" ? "text-orange-400" : "text-white/85"}`}>
                   {member.expiryDate || "N/A"}
                 </span>
-              </div>
-            </div>
-
-            {/* Split dashed tear line */}
-            <div className="relative flex items-center justify-between py-2">
-              <div className="absolute -left-10 w-8 h-8 rounded-full bg-[#050505] border-r border-white/[0.08]"></div>
-              <div className="w-full border-t-2 border-dashed border-white/10"></div>
-              <div className="absolute -right-10 w-8 h-8 rounded-full bg-[#050505] border-l border-white/[0.08]"></div>
-            </div>
-
-            {/* Barcode & QR scan area */}
-            <div className="flex flex-col items-center text-center space-y-4 pt-2">
-              <div className="bg-white p-3 rounded-2xl shadow-xl inline-block border border-white/10 group-hover:scale-105 transition-transform duration-300">
-                {/* Visual Representation of QR Code */}
-                <div className="w-28 h-28 bg-[#111] rounded-lg p-1 flex items-center justify-center relative">
-                  <QrCode size={100} className="text-white" strokeWidth={1.5} />
-                  {/* Central yellow core logo dot */}
-                  <div className="absolute w-6 h-6 bg-yellow-400 rounded-md flex items-center justify-center border border-[#111]">
-                    <span className="text-black font-black text-[10px]">A</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div>
-                <p className="text-[9px] text-white/40 uppercase tracking-widest font-black">Gate Passcode Scan</p>
-                <div className="flex flex-col items-center mt-1 space-y-1">
-                  {/* Barcode simulation */}
-                  <div className="flex gap-0.5 h-6 opacity-60">
-                    {[1, 3, 1, 2, 4, 1, 2, 1, 3, 2, 1, 4, 1, 2, 1, 3, 1, 2].map((w, idx) => (
-                      <div key={idx} className="bg-white h-full" style={{ width: `${w}px` }}></div>
-                    ))}
-                  </div>
-                  <span className="text-[8px] font-mono tracking-widest text-white/50">{member.id.toUpperCase()}</span>
-                </div>
               </div>
             </div>
           </div>
