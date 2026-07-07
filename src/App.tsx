@@ -1876,7 +1876,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#020202] text-white font-sans overflow-x-hidden relative pb-28 md:pb-8" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
+    <div className="min-h-screen bg-[#020202] text-white font-sans relative pb-28 md:pb-8" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
       
       {/* 1. LIQUID GLASS BACKDROP GLOWS */}
       <div className="absolute top-[-150px] left-[-150px] w-[350px] md:w-[600px] h-[350px] md:h-[600px] bg-yellow-500/10 rounded-full blur-[100px] md:blur-[160px] pointer-events-none"></div>
