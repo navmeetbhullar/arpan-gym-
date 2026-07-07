@@ -290,15 +290,19 @@ export default function App() {
       let refererId = "";
       if (regForm.referralCode) {
         const cleanedCode = regForm.referralCode.trim().toUpperCase();
-        const matchedMember = members.find(m => {
-          const mCode = `ARPAN${m.name.toUpperCase().replace(/\s+/g, "").slice(0, 6)}${m.memberId?.split("-").pop()}`;
+        // Always fetch fresh from Firebase — local `members` state may be empty
+        // for new visitors who haven't yet triggered a full data load.
+        const allMembers = members.length > 0 ? members : await getCollectionData<Member>("members");
+        const matchedMember = allMembers.find(m => {
+          if (!m.memberId) return false;
+          const mCode = `ARPAN${m.name.toUpperCase().replace(/\s+/g, "").slice(0, 6)}${m.memberId.split("-").pop()}`;
           return mCode === cleanedCode;
         });
 
         if (matchedMember) {
           refererId = matchedMember.id;
         } else {
-          setAuthError("Referral code not found. Please verify the code or clear the field.");
+          setAuthError("Referral code not found. Please double-check the code (format: ARPAN + name + ID digits) or leave the field empty to skip.");
           setAuthSubmitting(false);
           return;
         }
@@ -1872,7 +1876,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#020202] text-white font-sans overflow-x-hidden relative select-none pb-28 md:pb-8">
+    <div className="min-h-screen bg-[#020202] text-white font-sans overflow-x-hidden relative pb-28 md:pb-8" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
       
       {/* 1. LIQUID GLASS BACKDROP GLOWS */}
       <div className="absolute top-[-150px] left-[-150px] w-[350px] md:w-[600px] h-[350px] md:h-[600px] bg-yellow-500/10 rounded-full blur-[100px] md:blur-[160px] pointer-events-none"></div>

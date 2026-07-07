@@ -28,10 +28,31 @@ export default function BoardingPass({
   const [copied, setCopied] = useState(false);
   const referralCode = `ARPAN${member.name.toUpperCase().replace(/\s+/g, "").slice(0, 6)}${member.memberId.split("-").pop()}`;
 
-  const handleCopy = () => {
-    onCopyReferral(referralCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(referralCode);
+      } else {
+        // Fallback for older iOS Safari / non-HTTPS contexts
+        const textarea = document.createElement("textarea");
+        textarea.value = referralCode;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      onCopyReferral(referralCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Still call parent so at least the toast shows the code
+      onCopyReferral(referralCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   return (
