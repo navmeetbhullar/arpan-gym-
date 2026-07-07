@@ -2579,7 +2579,7 @@ export default function App() {
                     <h3 className="text-xs font-black uppercase tracking-widest text-white/60">Owners Announcements</h3>
                   </div>
                   
-                  <div className="space-y-4 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
+                  <div className="space-y-4 pr-1">
                     {announcements.map(ann => (
                       <div key={ann.id} className="p-3 bg-white/[0.01] border border-white/[0.03] rounded-xl text-left">
                         <div className="flex justify-between items-baseline mb-1">
@@ -2619,7 +2619,7 @@ export default function App() {
                       <p className="text-xs mt-1">Enjoy recovery, hydrate well, and relax!</p>
                     </div>
                   ) : (
-                    <div className="space-y-3 max-h-[220px] overflow-y-auto custom-scrollbar pr-1">
+                    <div className="space-y-3 pr-1">
                       {todayRoutine.exercises.map(ex => (
                         <div
                           key={ex.id}
@@ -3898,7 +3898,7 @@ export default function App() {
                           </div>
 
                           {/* Exercises added in selected day */}
-                          <div className="mb-4 space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                          <div className="mb-4 space-y-2 pr-1">
                             <p className="text-[10px] font-black uppercase text-white/30">Current scheduled exercises on {bSelectedDay}:</p>
                             {bWorkoutDays[bSelectedDay]?.length === 0 ? (
                               <p className="text-xs text-white/40 italic py-2 bg-white/[0.01] border border-dashed border-white/5 rounded-xl text-center">Rest Day / No exercises defined yet. Add them below!</p>
@@ -4118,7 +4118,7 @@ export default function App() {
                             {bDietMeals.length === 0 ? (
                               <p className="text-xs text-white/40 italic py-2 bg-white/[0.01] border border-dashed border-white/5 rounded-xl text-center">No meals added to plan template yet. Create them below!</p>
                             ) : (
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pr-1">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-1">
                                 {bDietMeals.map(meal => (
                                   <div key={meal.id} className="flex items-start justify-between bg-white/[0.03] border border-white/5 rounded-xl p-3 text-xs">
                                     <div className="space-y-1 text-left font-sans">

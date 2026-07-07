@@ -11,6 +11,19 @@ body {
   overscroll-behavior-y: none;
 }
 
+/* ── iOS Auto-Zoom Fix ───────────────────────────────────────────────────────
+   Safari zooms in whenever a focused input has font-size < 16px.
+   Force 16px on touch devices (phones/tablets) to suppress the zoom,
+   then scale back visually so the design stays unchanged.
+   ─────────────────────────────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
@@ -47,18 +60,16 @@ body {
 }
 
 @layer utilities {
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  /* Hide scrollbar on all overflow containers — page default scrollbar only */
+  .custom-scrollbar,
+  .no-scrollbar {
+    scrollbar-width: none;       /* Firefox */
+    -ms-overflow-style: none;    /* IE/Edge */
   }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
-    border-radius: 9999px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.25);
+  .custom-scrollbar::-webkit-scrollbar,
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;               /* Chrome, Safari, Opera, iOS WebKit */
+    width: 0;
+    height: 0;
   }
 }
