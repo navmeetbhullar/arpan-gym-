@@ -1858,7 +1858,7 @@ export default function App() {
 
   if (isLoading || authChecking) {
     return (
-      <div className="min-h-screen bg-[#020202] text-white font-sans flex flex-col items-center justify-center relative select-none">
+      <div className="h-full w-full overflow-y-auto bg-[#020202] text-white font-sans flex flex-col items-center justify-center relative select-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] h-[300px] bg-yellow-500/10 rounded-full blur-[100px] pointer-events-none"></div>
         <div className="z-10 text-center space-y-6 max-w-sm px-6">
           <div className="w-16 h-16 bg-yellow-400/10 border-2 border-yellow-400 rounded-2xl flex items-center justify-center text-yellow-400 mx-auto animate-spin">
@@ -1876,7 +1876,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#020202] text-white font-sans relative pb-28 md:pb-8" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
+    <div className="h-full w-full overflow-y-auto bg-[#020202] text-white font-sans relative pb-28 md:pb-8" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
       
       {/* 1. LIQUID GLASS BACKDROP GLOWS */}
       <div className="absolute top-[-150px] left-[-150px] w-[350px] md:w-[600px] h-[350px] md:h-[600px] bg-yellow-500/10 rounded-full blur-[100px] md:blur-[160px] pointer-events-none"></div>
