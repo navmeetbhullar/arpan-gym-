@@ -15,7 +15,7 @@ import {
   PlanChangeRequest,
   Exercise
 } from "./types";
-import { saveDocument, deleteDocument, seedCollectionIfEmpty, getCollectionData, auth, getDocument, googleProvider } from "./firebase";
+import { saveDocument, deleteDocument, subscribeCollection, seedCollectionIfEmpty, getCollectionData, auth, getDocument, googleProvider } from "./firebase";
 import { 
   signInWithPopup, 
   signOut, 
@@ -406,11 +406,10 @@ export default function App() {
   useEffect(() => {
     async function initDb() {
       try {
-        // Members, announcements, notifications, plan requests: load from Firebase (no fake seed data)
+        // Members, announcements, notifications: load from Firebase (no fake seed data)
         const loadedMembers = await getCollectionData<Member>("members");
         const loadedAnnouncements = await getCollectionData<GymAnnouncement>("announcements");
         const loadedNotifs = await getCollectionData<GymNotification>("notifications");
-        const loadedPlanRequests = await getCollectionData<PlanChangeRequest>("planRequests");
 
         // Workout & diet plans: seed defaults on first run so admin has a starting library
         const loadedWorkoutPlans = await seedCollectionIfEmpty("workoutPlans", DEFAULT_WORKOUT_PLANS);
@@ -429,7 +428,6 @@ export default function App() {
         setMembers(loadedMembers);
         setAnnouncements(loadedAnnouncements);
         setNotifications(loadedNotifs);
-        setPlanRequests(loadedPlanRequests);
         setWorkoutPlans(loadedWorkoutPlans);
         setDietPlans(loadedDietPlans);
       } catch (e) {
@@ -439,6 +437,15 @@ export default function App() {
       }
     }
     initDb();
+
+    // Real-time listener for planRequests — updates instantly on both admin and member sessions
+    const unsubscribePlanRequests = subscribeCollection<PlanChangeRequest>("planRequests", (items) => {
+      setPlanRequests(items);
+    });
+
+    return () => {
+      unsubscribePlanRequests();
+    };
   }, []);
 
   useEffect(() => {
@@ -1496,23 +1503,31 @@ export default function App() {
   };
 
   // Admin approves a plan change request
-  const handleApprovePlanChange = (reqId: string, memberId: string, targetPlanName: string) => {
+  // Admin approves a plan change request
+  const handleApprovePlanChange = async (reqId: string, memberId: string, targetPlanName: string) => {
     // Find target plan ID from name
     const planId = workoutPlans.find(p => p.name === targetPlanName)?.id || "power-builder";
     const dietId = dietPlans.find(p => p.name.includes("Keto") && targetPlanName.includes("Keto"))?.id || "clean-bulk";
 
-    // Update Request status
-    setPlanRequests(prev => prev.map(r => r.id === reqId ? { ...r, status: "Approved" } : r));
+    // Update Request status in state and Firebase immediately
+    const updatedReq = planRequests.find(r => r.id === reqId);
+    if (updatedReq) {
+      const approvedReq = { ...updatedReq, status: "Approved" as const };
+      setPlanRequests(prev => prev.map(r => r.id === reqId ? approvedReq : r));
+      await saveDocument("planRequests", approvedReq);
+    }
 
-    // Shift member plan
+    // Shift member plan in state and Firebase immediately
     setMembers(prev => prev.map(m => {
       if (m.id === memberId) {
-        return {
+        const updatedM = {
           ...m,
           workoutPlanId: planId,
           dietPlanId: dietId,
           trainerNote: `Shifted to your requested plan: ${targetPlanName}.`
         };
+        saveDocument("members", updatedM);
+        return updatedM;
       }
       return m;
     }));
@@ -1532,8 +1547,13 @@ export default function App() {
   };
 
   // Admin disapproves a plan change request
-  const handleDisapprovePlanChange = (reqId: string, targetPlanName: string) => {
-    setPlanRequests(prev => prev.map(r => r.id === reqId ? { ...r, status: "Rejected" } : r));
+  const handleDisapprovePlanChange = async (reqId: string, targetPlanName: string) => {
+    const updatedReq = planRequests.find(r => r.id === reqId);
+    if (updatedReq) {
+      const rejectedReq = { ...updatedReq, status: "Rejected" as const };
+      setPlanRequests(prev => prev.map(r => r.id === reqId ? rejectedReq : r));
+      await saveDocument("planRequests", rejectedReq);
+    }
 
     const planShiftNotif: GymNotification = {
       id: `shift-rejected-${Date.now()}`,
@@ -1548,9 +1568,10 @@ export default function App() {
   };
 
   // Admin deletes a plan change request
-  const handleDeletePlanChange = (reqId: string) => {
+  const handleDeletePlanChange = async (reqId: string) => {
     setPlanRequests(prev => prev.filter(r => r.id !== reqId));
     triggerToast("Shift request deleted from history. 🗑️");
+    await deleteDocument("planRequests", reqId);
   };
 
   const handleAddExerciseToDay = (e: React.MouseEvent) => {

@@ -9,7 +9,8 @@ import {
   doc,
   setDoc,
   deleteDoc,
-  writeBatch
+  writeBatch,
+  onSnapshot
 } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { Member, GymAnnouncement, GymNotification, PlanChangeRequest, WorkoutPlan, DietPlan } from "./types";
@@ -82,6 +83,21 @@ export async function deleteDocument(collectionName: string, id: string): Promis
   } catch (error) {
     console.error(`Error deleting document from ${collectionName}:`, error);
   }
+}
+
+// Real-time listener — calls callback whenever collection changes
+export function subscribeCollection<T>(collectionName: string, callback: (items: T[]) => void): () => void {
+  const colRef = collection(db, collectionName);
+  const unsubscribe = onSnapshot(colRef, (snapshot) => {
+    const items: T[] = [];
+    snapshot.forEach((d) => {
+      items.push({ id: d.id, ...d.data() } as unknown as T);
+    });
+    callback(items);
+  }, (error) => {
+    console.error(`Error in realtime listener for ${collectionName}:`, error);
+  });
+  return unsubscribe;
 }
 
 // Batch seeding helper
