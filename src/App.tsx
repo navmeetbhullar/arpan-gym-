@@ -1531,6 +1531,28 @@ export default function App() {
     triggerToast("Approved and updated member's active plan curriculum! 🏋️");
   };
 
+  // Admin disapproves a plan change request
+  const handleDisapprovePlanChange = (reqId: string, targetPlanName: string) => {
+    setPlanRequests(prev => prev.map(r => r.id === reqId ? { ...r, status: "Rejected" } : r));
+
+    const planShiftNotif: GymNotification = {
+      id: `shift-rejected-${Date.now()}`,
+      timestamp: "Just Now",
+      title: "❌ Plan Change Declined",
+      message: `Your coach reviewed your request for ${targetPlanName} and advised to stick with your current curriculum for now.`,
+      type: "warning",
+      read: false
+    };
+    setNotifications(prev => [planShiftNotif, ...prev]);
+    triggerToast("Shift request rejected and member notified. ⛔");
+  };
+
+  // Admin deletes a plan change request
+  const handleDeletePlanChange = (reqId: string) => {
+    setPlanRequests(prev => prev.filter(r => r.id !== reqId));
+    triggerToast("Shift request deleted from history. 🗑️");
+  };
+
   const handleAddExerciseToDay = (e: React.MouseEvent) => {
     e.preventDefault();
     if (!bExerciseName) {
@@ -2911,6 +2933,13 @@ export default function App() {
                           <span className="text-[10px] bg-green-500/15 border border-green-500/25 text-green-400 px-2 py-0.5 rounded-full font-bold uppercase">
                             Currently Active
                           </span>
+                        ) : planRequests.find(r => r.memberId === currentMember.id && r.requestedPlanName === plan.name)?.status === "Pending" ? (
+                          <button
+                            disabled
+                            className="px-3.5 py-1.5 bg-yellow-400/50 text-black/50 font-black text-[10px] uppercase tracking-wider rounded-lg cursor-not-allowed"
+                          >
+                            Requested
+                          </button>
                         ) : (
                           <button
                             onClick={() => handleRequestPlanChange(plan.name)}
@@ -3341,16 +3370,35 @@ export default function App() {
 
                         <div>
                           {req.status === "Pending" ? (
-                            <button
-                              onClick={() => handleApprovePlanChange(req.id, req.memberId, req.requestedPlanName)}
-                              className="px-3.5 py-2 bg-red-500 hover:bg-red-400 text-white font-black text-[10px] uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
-                            >
-                              Approve Plan Shift
-                            </button>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <button
+                                onClick={() => handleApprovePlanChange(req.id, req.memberId, req.requestedPlanName)}
+                                className="px-3.5 py-2 bg-green-500 hover:bg-green-400 text-white font-black text-[10px] uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => handleDisapprovePlanChange(req.id, req.requestedPlanName)}
+                                className="px-3.5 py-2 bg-red-500/20 border border-red-500/50 hover:bg-red-500/40 text-red-500 hover:text-white font-black text-[10px] uppercase tracking-wider rounded-lg transition-colors cursor-pointer"
+                              >
+                                Disapprove
+                              </button>
+                            </div>
                           ) : (
-                            <span className="text-[10px] font-bold text-green-400 uppercase bg-green-400/15 px-2.5 py-1 rounded">
-                              Shift Approved ✓
-                            </span>
+                            <div className="flex flex-col sm:flex-row items-center gap-3">
+                              <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded ${
+                                req.status === "Approved" ? "text-green-400 bg-green-400/15" : "text-red-400 bg-red-400/15"
+                              }`}>
+                                Shift {req.status} {req.status === "Approved" ? "✓" : "✕"}
+                              </span>
+                              <button
+                                onClick={() => handleDeletePlanChange(req.id)}
+                                className="text-white/40 hover:text-white transition-colors cursor-pointer p-1"
+                                title="Delete Record"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
