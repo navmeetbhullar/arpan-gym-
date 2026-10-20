@@ -13,9 +13,10 @@ import {
   GymAnnouncement, 
   GymNotification, 
   PlanChangeRequest,
+  LeaderboardEntry,
   Exercise
 } from "./types";
-import { saveDocument, deleteDocument, subscribeCollection, seedCollectionIfEmpty, getCollectionData, auth, getDocument, googleProvider } from "./firebase";
+import { saveDocument, deleteDocument, subscribeCollection, subscribeWhere, subscribeDocument, seedCollectionIfEmpty, auth, getDocument, googleProvider } from "./firebase";
 import { 
   signInWithPopup, 
   signOut, 
@@ -83,6 +84,7 @@ export default function App() {
   const [planRequests, setPlanRequests] = useState<PlanChangeRequest[]>([]);
   const [workoutPlans, setWorkoutPlans] = useState<WorkoutPlan[]>([]);
   const [dietPlans, setDietPlans] = useState<DietPlan[]>([]);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
 
   // --- Active Session Management ---
   const [isLoading, setIsLoading] = useState(true);
@@ -254,7 +256,7 @@ export default function App() {
       setAuthChecking(false);
     });
     return () => unsubscribe();
-  }, [members]);
+  }, []);
 
   const handleGoogleSignIn = async () => {
     setAuthError("");
@@ -287,26 +289,9 @@ export default function App() {
     setAuthError("");
     setAuthSubmitting(true);
     try {
-      let refererId = "";
-      if (regForm.referralCode) {
-        const cleanedCode = regForm.referralCode.trim().toUpperCase();
-        // Always fetch fresh from Firebase — local `members` state may be empty
-        // for new visitors who haven't yet triggered a full data load.
-        const allMembers = members.length > 0 ? members : await getCollectionData<Member>("members");
-        const matchedMember = allMembers.find(m => {
-          if (!m.memberId) return false;
-          const mCode = `ARPAN${m.name.toUpperCase().replace(/\s+/g, "").slice(0, 6)}${m.memberId.split("-").pop()}`;
-          return mCode === cleanedCode;
-        });
-
-        if (matchedMember) {
-          refererId = matchedMember.id;
-        } else {
-          setAuthError("Referral code not found. Please double-check the code (format: ARPAN + name + ID digits) or leave the field empty to skip.");
-          setAuthSubmitting(false);
-          return;
-        }
-      }
+      // Members can't look up other members, so we only store the code here.
+      // The admin checks it and awards the referral bonus when approving.
+      const referredByCode = regForm.referralCode ? regForm.referralCode.trim().toUpperCase() : "";
 
       const newMember: Member = {
         id: currentUser.uid,
@@ -337,35 +322,12 @@ export default function App() {
         absentDays: 0,
         role: "member",
         email: currentUser.email || "",
-        gymAccess: regForm.gymAccess
+        gymAccess: regForm.gymAccess,
+        ...(referredByCode ? { referredByCode } : {})
       };
 
       await saveDocument("members", newMember);
       setMembers(prev => prev.some(m => m.id === newMember.id) ? prev.map(m => m.id === newMember.id ? newMember : m) : [...prev, newMember]);
-
-      if (refererId) {
-        const referer = members.find(m => m.id === refererId);
-        if (referer) {
-          const updatedReferer = {
-            ...referer,
-            referrals: (referer.referrals || 0) + 1,
-            points: (referer.points || 0) + 100
-          };
-          await saveDocument("members", updatedReferer);
-          setMembers(prev => prev.map(m => m.id === refererId ? updatedReferer : m));
-          
-          const refNotif: GymNotification = {
-            id: `ref-notif-${Date.now()}`,
-            timestamp: "Just Now",
-            title: "🎁 Referral Bonus Earned!",
-            message: `Your friend ${newMember.name} joined using your code! You've received +100 PTS and 1 successful referral!`,
-            type: "success",
-            read: false
-          };
-          await saveDocument("notifications", refNotif);
-          setNotifications(prev => [refNotif, ...prev]);
-        }
-      }
 
       // Push admin notification for review
       const regAlert: GymNotification = {
@@ -403,14 +365,24 @@ export default function App() {
   };
 
   // --- Effects: load from Firebase, cache in localStorage ---
+  // Runs once sign-in is known. The database only lets signed-in users read,
+  // and only admins can read every member / notification / plan request,
+  // so members subscribe to just their own data.
+  const isAdminSession = activeRole === "admin";
+  const signedInUid = currentUser?.uid || "";
   useEffect(() => {
+    if (authChecking) return;
+    if (!signedInUid) {
+      setMembers([]);
+      setNotifications([]);
+      setPlanRequests([]);
+      setLeaderboardEntries([]);
+      setIsLoading(false);
+      return;
+    }
+
     async function initDb() {
       try {
-        // Members, announcements, notifications: load from Firebase (no fake seed data)
-        const loadedMembers = await getCollectionData<Member>("members");
-        const loadedAnnouncements = await getCollectionData<GymAnnouncement>("announcements");
-        const loadedNotifs = await getCollectionData<GymNotification>("notifications");
-
         // Workout & diet plans: seed defaults on first run so admin has a starting library
         const loadedWorkoutPlans = await seedCollectionIfEmpty("workoutPlans", DEFAULT_WORKOUT_PLANS);
         const loadedDietPlans = await seedCollectionIfEmpty("dietPlans", DEFAULT_DIET_PLANS);
@@ -425,9 +397,6 @@ export default function App() {
           qrCodeUrl: currentConfig.qrCodeUrl || ""
         });
 
-        setMembers(loadedMembers);
-        setAnnouncements(loadedAnnouncements);
-        setNotifications(loadedNotifs);
         setWorkoutPlans(loadedWorkoutPlans);
         setDietPlans(loadedDietPlans);
       } catch (e) {
@@ -438,15 +407,56 @@ export default function App() {
     }
     initDb();
 
-    // Real-time listener for planRequests — updates instantly on both admin and member sessions
-    const unsubscribePlanRequests = subscribeCollection<PlanChangeRequest>("planRequests", (items) => {
-      setPlanRequests(items);
+    // Real-time listener for members — the admin sees everyone live (new
+    // registrations, approvals); a member only gets their own profile, which
+    // still updates live the moment the admin approves/edits them.
+    const onMembers = (items: Member[]) => {
+      setMembers(items);
+      try {
+        localStorage.setItem("arpan_gym_members", JSON.stringify(items));
+      } catch (e) {}
+    };
+    const unsubscribeMembers = isAdminSession
+      ? subscribeCollection<Member>("members", onMembers)
+      : subscribeDocument<Member>("members", signedInUid, onMembers);
+
+    // Real-time listener for announcements — a new announcement appears in
+    // the member's feed instantly, no refresh needed.
+    const unsubscribeAnnouncements = subscribeCollection<GymAnnouncement>("announcements", (items) => {
+      setAnnouncements(items);
+      try {
+        localStorage.setItem("arpan_gym_announcements", JSON.stringify(items));
+      } catch (e) {}
     });
 
-    return () => {
-      unsubscribePlanRequests();
+    // Real-time listener for notifications — the admin gets all of them,
+    // a member gets the ones addressed to them plus gym-wide broadcasts.
+    const onNotifications = (items: GymNotification[]) => {
+      setNotifications(items);
+      try {
+        localStorage.setItem("arpan_gym_notifs", JSON.stringify(items));
+      } catch (e) {}
     };
-  }, []);
+    const unsubscribeNotifications = isAdminSession
+      ? subscribeCollection<GymNotification>("notifications", onNotifications)
+      : subscribeWhere<GymNotification>("notifications", "memberId", [signedInUid, "all"], onNotifications);
+
+    // Real-time listener for planRequests — admin sees all, a member sees their own
+    const unsubscribePlanRequests = isAdminSession
+      ? subscribeCollection<PlanChangeRequest>("planRequests", setPlanRequests)
+      : subscribeWhere<PlanChangeRequest>("planRequests", "memberId", [signedInUid], setPlanRequests);
+
+    // Public leaderboard (name, points, streak only — no contact details)
+    const unsubscribeLeaderboard = subscribeCollection<LeaderboardEntry>("leaderboard", setLeaderboardEntries);
+
+    return () => {
+      unsubscribeMembers();
+      unsubscribeAnnouncements();
+      unsubscribeNotifications();
+      unsubscribePlanRequests();
+      unsubscribeLeaderboard();
+    };
+  }, [authChecking, signedInUid, isAdminSession]);
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
@@ -463,51 +473,26 @@ export default function App() {
 
   useEffect(() => {
     if (isLoading) return;
-    localStorage.setItem("arpan_gym_members", JSON.stringify(members));
-    members.forEach((m) => {
-      saveDocument("members", m);
-    });
-  }, [members, isLoading]);
-
-  useEffect(() => {
-    if (isLoading) return;
-    localStorage.setItem("arpan_gym_announcements", JSON.stringify(announcements));
-    announcements.forEach((a) => {
-      saveDocument("announcements", a);
-    });
-  }, [announcements, isLoading]);
-
-  useEffect(() => {
-    if (isLoading) return;
-    localStorage.setItem("arpan_gym_notifs", JSON.stringify(notifications));
-    notifications.forEach((n) => {
-      saveDocument("notifications", n);
-    });
-  }, [notifications, isLoading]);
-
-  useEffect(() => {
-    if (isLoading) return;
     localStorage.setItem("arpan_gym_plan_requests", JSON.stringify(planRequests));
-    planRequests.forEach((pr) => {
-      saveDocument("planRequests", pr);
-    });
   }, [planRequests, isLoading]);
 
   useEffect(() => {
     if (isLoading) return;
     localStorage.setItem("arpan_gym_workout_plans", JSON.stringify(workoutPlans));
+    if (!isAdminSession) return; // only the admin can change plans
     workoutPlans.forEach((wp) => {
       saveDocument("workoutPlans", wp);
     });
-  }, [workoutPlans, isLoading]);
+  }, [workoutPlans, isLoading, isAdminSession]);
 
   useEffect(() => {
     if (isLoading) return;
     localStorage.setItem("arpan_gym_diet_plans", JSON.stringify(dietPlans));
+    if (!isAdminSession) return; // only the admin can change plans
     dietPlans.forEach((dp) => {
       saveDocument("dietPlans", dp);
     });
-  }, [dietPlans, isLoading]);
+  }, [dietPlans, isLoading, isAdminSession]);
 
   // Current real-time Clock update
   useEffect(() => {
@@ -531,6 +516,54 @@ export default function App() {
   // --- Get current logged in member entity ---
   const currentMember = members.find(m => m.id === activeMemberId) || members[0];
 
+  // Real gym members only. Admin accounts also live in the `members`
+  // collection (so role-based sign-in routing works), but they should
+  // never be counted as a member — not in active/pending counts, not in
+  // the leaderboard, not in performer/report stats, and not sitting in
+  // the pending-approval queue if an admin account hasn't been flipped
+  // to "Active" yet.
+  const realMembers = members.filter(m => m.role !== "admin");
+
+  // Keep activeRole in sync live. If the admin approves, suspends, expires,
+  // or promotes this member in another session, this session's members
+  // subscription updates automatically — this effect reacts to that and
+  // moves the person out of Pending/into Member (etc.) with no refresh.
+  useEffect(() => {
+    if (!activeMemberId) return;
+    const liveProfile = members.find(m => m.id === activeMemberId);
+    if (!liveProfile) return;
+    if (liveProfile.role === "admin") {
+      setActiveRole("admin");
+    } else if (liveProfile.status === "Pending Approval") {
+      setActiveRole("pending");
+    } else if (liveProfile.status === "Expired") {
+      setActiveRole("expired");
+    } else {
+      setActiveRole("member");
+    }
+  }, [members, activeMemberId]);
+
+  // Keep the public leaderboard copy in sync with real member data.
+  // The admin syncs everyone; a member syncs only their own entry (the
+  // database rules only accept values that match their real profile).
+  useEffect(() => {
+    if (isLoading || !signedInUid) return;
+    const source = activeRole === "admin"
+      ? realMembers.filter(m => m.status !== "Pending Approval")
+      : members.filter(m => m.id === signedInUid && m.role !== "admin" && m.status !== "Pending Approval");
+    source.forEach(m => {
+      const entry = leaderboardEntries.find(e => e.id === m.id);
+      if (!entry || entry.name !== m.name || entry.points !== m.points || entry.streak !== m.streak) {
+        saveDocument<LeaderboardEntry>("leaderboard", { id: m.id, name: m.name, points: m.points, streak: m.streak });
+      }
+    });
+    if (activeRole === "admin") {
+      leaderboardEntries
+        .filter(e => !source.some(m => m.id === e.id))
+        .forEach(e => deleteDocument("leaderboard", e.id));
+    }
+  }, [members, leaderboardEntries, activeRole, isLoading, signedInUid]);
+
   // Derived greeting shift message
   const getShiftGreeting = (member: Member) => {
     const preferred = member.preferredShift;
@@ -553,8 +586,6 @@ export default function App() {
           ? completed.filter(id => id !== exerciseId)
           : [...completed, exerciseId];
 
-        let pointsAward = 0;
-
         // Check if all exercises of today are completed
         const mActivePlan = workoutPlans.find(p => p.id === m.workoutPlanId) || workoutPlans[0];
         const mDayName = new Date().toLocaleDateString([], { weekday: "long" });
@@ -568,44 +599,45 @@ export default function App() {
           const isAllCompleted = mTodayRoutine.exercises.every(ex => nextCompleted.includes(ex.id));
 
           if (!wasAllCompleted && isAllCompleted) {
-            pointsAward += 10;
             isDailyCompleteBonus = true;
           } else if (wasAllCompleted && !isAllCompleted) {
-            pointsAward -= 10;
             isDailyCompleteRemoved = true;
           }
         }
 
         if (!isCompleted) {
           if (isDailyCompleteBonus) {
-            triggerToast("All exercises done! +10 PTS Perfect Day Bonus! 🎉");
+            triggerToast("All exercises done! Perfect Day! 🎉");
             
             const newLog: GymNotification = {
               id: `notif-ex-all-${Date.now()}`,
               timestamp: "Just Now",
               title: "🏆 Perfect Workout Day!",
-              message: `You completed every single exercise scheduled for today! Added +10 PTS Bonus!`,
+              message: `You completed every single exercise scheduled for today!`,
               type: "success",
-              read: false
+              read: false,
+              memberId: m.id
             };
             setNotifications(prevNotifs => [newLog, ...prevNotifs]);
+            saveDocument("notifications", newLog);
           } else {
             triggerToast("Exercise Checked! 👍");
           }
         } else {
           if (isDailyCompleteRemoved) {
-            triggerToast("Uncompleted workout. -10 PTS Perfect Day Bonus removed.");
+            triggerToast("Uncompleted workout. Perfect Day removed.");
           } else {
             triggerToast("Exercise unchecked.");
           }
         }
 
-        return {
+        const updatedM = {
           ...m,
           completedExercises: nextCompleted,
-          points: Math.max(0, m.points + pointsAward),
           streak: m.streak === 0 && !isCompleted ? 1 : m.streak
         };
+        saveDocument("members", updatedM);
+        return updatedM;
       }
       return m;
     }));
@@ -621,18 +653,18 @@ export default function App() {
           ? completed.filter(id => id !== mealId)
           : [...completed, mealId];
 
-        const pointsAward = isCompleted ? -15 : 15;
         if (!isCompleted) {
-          triggerToast("Meal Consumed! +15 PTS. Clean fuel! 🥗");
+          triggerToast("Meal Consumed! Clean fuel! 🥗");
         } else {
-          triggerToast("Meal un-checked. -15 PTS.");
+          triggerToast("Meal un-checked.");
         }
 
-        return {
+        const updatedM = {
           ...m,
-          completedMeals: nextCompleted,
-          points: Math.max(0, m.points + pointsAward)
+          completedMeals: nextCompleted
         };
+        saveDocument("members", updatedM);
+        return updatedM;
       }
       return m;
     }));
@@ -644,10 +676,14 @@ export default function App() {
       if (m.id === currentMember.id) {
         const nextWater = Math.max(0, parseFloat((m.waterIntake + qty).toFixed(2)));
         if (qty > 0) {
-          triggerToast(`Hydrated! Current Intake: ${nextWater}L. +5 PTS`);
-          return { ...m, waterIntake: nextWater, points: m.points + 5 };
+          triggerToast(`Hydrated! Current Intake: ${nextWater}L.`);
+          const updatedM = { ...m, waterIntake: nextWater };
+          saveDocument("members", updatedM);
+          return updatedM;
         }
-        return { ...m, waterIntake: nextWater };
+        const updatedM = { ...m, waterIntake: nextWater };
+        saveDocument("members", updatedM);
+        return updatedM;
       }
       return m;
     }));
@@ -671,13 +707,14 @@ export default function App() {
           }
           if (newHistory.length > 6) newHistory.shift();
 
-          triggerToast(`Weight registered: ${wVal} kg. Streak Points +20!`);
-          return {
+          triggerToast(`Weight registered: ${wVal} kg.`);
+          const updatedM = {
             ...m,
             weight: wVal,
-            weightHistory: newHistory,
-            points: m.points + 20
+            weightHistory: newHistory
           };
+          saveDocument("members", updatedM);
+          return updatedM;
         }
         return m;
       }));
@@ -694,12 +731,13 @@ export default function App() {
     if (!isNaN(sVal) && sVal >= 0 && sVal <= 24) {
       setMembers(prev => prev.map(m => {
         if (m.id === currentMember.id) {
-          triggerToast(`Logged ${sVal} hours of rest. Recoup points +15!`);
-          return {
+          triggerToast(`Logged ${sVal} hours of rest.`);
+          const updatedM = {
             ...m,
-            sleepHours: sVal,
-            points: m.points + 15
+            sleepHours: sVal
           };
+          saveDocument("members", updatedM);
+          return updatedM;
         }
         return m;
       }));
@@ -722,6 +760,7 @@ export default function App() {
     };
 
     setPlanRequests(prev => [newReq, ...prev]);
+    saveDocument("planRequests", newReq);
     
     // Add Notification to Admin
     const adminAlert: GymNotification = {
@@ -734,6 +773,7 @@ export default function App() {
       forAdmin: true
     };
     setNotifications(prev => [adminAlert, ...prev]);
+    saveDocument("notifications", adminAlert);
 
     setShowPlanRequestModal(false);
     triggerToast("Plan change request submitted to Coach Arpan! 🤝");
@@ -753,7 +793,7 @@ export default function App() {
 
       setScanningState("success");
       
-      // Update streak and add 100 PTS
+      // Update streak
       setMembers(prev => prev.map(m => {
         if (m.id === currentMember.id) {
           const todayString = new Date().toISOString().split("T")[0];
@@ -767,7 +807,6 @@ export default function App() {
           return {
             ...m,
             streak: m.streak + 1,
-            points: m.points + 100,
             attendanceHistory: [...m.attendanceHistory, todayString],
             absentDays: 0
           };
@@ -780,9 +819,10 @@ export default function App() {
         id: `notif-chk-${Date.now()}`,
         timestamp: "Just Now",
         title: "🔥 Attendance Marked!",
-        message: "Your attendance QR scan has been successfully authenticated. Streak +1, Points +100!",
+        message: "Your attendance QR scan has been successfully authenticated. Streak +1!",
         type: "success",
-        read: false
+        read: false,
+        memberId: currentMember.id
       };
       setNotifications(prev => [checkInAlert, ...prev]);
 
@@ -1033,11 +1073,11 @@ export default function App() {
       doc.text("PORTAL: OWNER-ADMIN", 150, 26);
       
       // Executive counters
-      const activeCount = members.filter(m => m.status === "Active" || m.status === "Expiring Soon").length;
-      const expiringCount = members.filter(m => m.status === "Expiring Soon").length;
-      const pendingCount = members.filter(m => m.status === "Pending Approval").length;
+      const activeCount = realMembers.filter(m => m.status === "Active" || m.status === "Expiring Soon").length;
+      const expiringCount = realMembers.filter(m => m.status === "Expiring Soon").length;
+      const pendingCount = realMembers.filter(m => m.status === "Pending Approval").length;
       const todayString = today.toISOString().split("T")[0];
-      const todayAttendeesCount = members.filter(m => m.attendanceHistory?.includes(todayString)).length;
+      const todayAttendeesCount = realMembers.filter(m => m.attendanceHistory?.includes(todayString)).length;
       
       doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
       doc.setFont("helvetica", "bold");
@@ -1083,7 +1123,7 @@ export default function App() {
         "Sunday": 0, "Monday": 0, "Tuesday": 0, "Wednesday": 0, "Thursday": 0, "Friday": 0, "Saturday": 0
       };
       let totalAttendanceLogs = 0;
-      members.forEach(m => {
+      realMembers.forEach(m => {
         (m.attendanceHistory || []).forEach(dateStr => {
           const d = new Date(dateStr);
           if (!isNaN(d.getTime())) {
@@ -1118,7 +1158,7 @@ export default function App() {
       if (leastActiveCount === Infinity) leastActiveDay = "N/A";
       
       // Calculate Performers
-      const approvedMembers = members.filter(m => m.status !== "Pending Approval");
+      const approvedMembers = realMembers.filter(m => m.status !== "Pending Approval");
       let highestPerformer: Member | null = null;
       let lowestPerformer: Member | null = null;
       if (approvedMembers.length > 0) {
@@ -1134,7 +1174,7 @@ export default function App() {
       }
       
       // Calculate New Member
-      const sortedByJoin = [...members]
+      const sortedByJoin = [...realMembers]
         .filter(m => m.joinedDate)
         .sort((a, b) => new Date(b.joinedDate).getTime() - new Date(a.joinedDate).getTime());
       const newMember = sortedByJoin[0];
@@ -1364,7 +1404,7 @@ export default function App() {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
       
-      members.forEach((m, idx) => {
+      realMembers.forEach((m, idx) => {
         if (currentY > 265) {
           // Footer page 3 inside page break
           doc.setDrawColor(230, 230, 230);
@@ -1472,11 +1512,13 @@ export default function App() {
             workoutPlans.find(p => p.id === selectedWorkoutPlan)?.name
           }. Check your Fitness and Profile tabs!`,
           type: "success",
-          read: false
+          read: false,
+          memberId: m.id
         };
 
         // Remove the welcomeNotif from admin, we will append it so the member sees it when they log in!
         setNotifications(prev => [welcomeNotif, ...prev]);
+        saveDocument("notifications", welcomeNotif);
 
         const approvedM = {
           ...m,
@@ -1492,8 +1534,36 @@ export default function App() {
           trainerPhone: "+91 99999-88888",
           points: m.points + 200 // Bonus on onboarding!
         };
+        if (m.referredByCode) approvedM.referredByCode = ""; // bonus is only given once
 
         saveDocument("members", approvedM);
+
+        // Referral bonus: the new member typed a friend's code at sign-up
+        if (m.referredByCode) {
+          const referer = prev.find(r => {
+            if (!r.memberId || r.id === m.id) return false;
+            const rCode = `ARPAN${r.name.toUpperCase().replace(/\s+/g, "").slice(0, 6)}${r.memberId.split("-").pop()}`;
+            return rCode === m.referredByCode;
+          });
+          if (referer) {
+            const updatedReferer = {
+              ...referer,
+              referrals: (referer.referrals || 0) + 1,
+              points: (referer.points || 0) + 100
+            };
+            saveDocument("members", updatedReferer);
+            const refNotif: GymNotification = {
+              id: `ref-notif-${Date.now()}`,
+              timestamp: "Just Now",
+              title: "🎁 Referral Bonus Earned!",
+              message: `Your friend ${m.name} joined using your code! You've received +100 PTS and 1 successful referral!`,
+              type: "success",
+              read: false,
+              memberId: referer.id
+            };
+            saveDocument("notifications", refNotif);
+          }
+        }
         return approvedM;
       }
       return m;
@@ -1539,9 +1609,11 @@ export default function App() {
       title: "📋 Plan Change Approved!",
       message: `Your coach approved your request. Your workout curriculum has successfully updated to ${targetPlanName}!`,
       type: "success",
-      read: false
+      read: false,
+      memberId
     };
     setNotifications(prev => [planShiftNotif, ...prev]);
+    saveDocument("notifications", planShiftNotif);
 
     triggerToast("Approved and updated member's active plan curriculum! 🏋️");
   };
@@ -1561,9 +1633,11 @@ export default function App() {
       title: "❌ Plan Change Declined",
       message: `Your coach reviewed your request for ${targetPlanName} and advised to stick with your current curriculum for now.`,
       type: "warning",
-      read: false
+      read: false,
+      ...(updatedReq ? { memberId: updatedReq.memberId } : {})
     };
     setNotifications(prev => [planShiftNotif, ...prev]);
+    saveDocument("notifications", planShiftNotif);
     triggerToast("Shift request rejected and member notified. ⛔");
   };
 
@@ -1723,6 +1797,7 @@ export default function App() {
     };
 
     setAnnouncements(prev => [newAnn, ...prev]);
+    saveDocument("announcements", newAnn);
 
     // Broadcast notification to all members
     const broadcastNotif: GymNotification = {
@@ -1731,9 +1806,11 @@ export default function App() {
       title: `📢 Announcement: ${newAnnouncementTitle}`,
       message: newAnnouncementContent,
       type: "info",
-      read: false
+      read: false,
+      memberId: "all"
     };
     setNotifications(prev => [broadcastNotif, ...prev]);
+    saveDocument("notifications", broadcastNotif);
 
     setNewAnnouncementTitle("");
     setNewAnnouncementContent("");
@@ -1827,8 +1904,11 @@ export default function App() {
       address: "",
       height: 178,
       weight: 79.5,
+      targetWeight: 79.5,
       preferredShift: "Morning Shift",
-      goals: "Muscle Gain & Strength"
+      goals: "Muscle Gain & Strength",
+      gymAccess: "",
+      referralCode: ""
     });
 
     triggerToast("UPI Transaction Logged! Awaiting Owner Approval. 💳");
@@ -1837,8 +1917,12 @@ export default function App() {
   // Mark all notifications read
   const handleMarkAllRead = () => {
     setNotifications(prev => prev.map(n => {
-      if (activeRole === "admin" && n.forAdmin) return { ...n, read: true };
-      if (activeRole !== "admin" && !n.forAdmin) return { ...n, read: true };
+      const shouldMark = (activeRole === "admin" && n.forAdmin) || (activeRole !== "admin" && !n.forAdmin && n.memberId === activeMemberId);
+      if (shouldMark && !n.read) {
+        const updatedN = { ...n, read: true };
+        saveDocument("notifications", updatedN);
+        return updatedN;
+      }
       return n;
     }));
     triggerToast("All notifications marked as read.");
@@ -1846,7 +1930,7 @@ export default function App() {
 
   // Clear all notifications
   const handleClearAll = () => {
-    const toRemove = notifications.filter(n => activeRole === "admin" ? n.forAdmin : !n.forAdmin);
+    const toRemove = notifications.filter(n => activeRole === "admin" ? n.forAdmin : (!n.forAdmin && n.memberId === activeMemberId));
     toRemove.forEach(n => {
       deleteDocument("notifications", n.id);
     });
@@ -1861,7 +1945,13 @@ export default function App() {
   };
 
   const handleToggleRead = (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: !n.read } : n));
+    setNotifications(prev => prev.map(n => {
+      if (n.id !== id) return n;
+      if (activeRole !== "admin" && n.memberId !== activeMemberId) return n; // broadcasts are read-only for members
+      const updatedN = { ...n, read: !n.read };
+      saveDocument("notifications", updatedN);
+      return updatedN;
+    }));
   };
 
   // --- Calculations for UI ---
@@ -1873,9 +1963,12 @@ export default function App() {
   // Fallback to Monday if Rest Day or not found in routine
   const todayRoutine = activeWorkoutPlan?.weeklyRoutine?.find(r => r.day === currentDayName) || activeWorkoutPlan?.weeklyRoutine?.[0];
 
-  // Leaderboard data calculation
-  const calculatedLeaderboard = members
-    .filter(m => m.status !== "Pending Approval")
+  // Leaderboard data calculation. The admin can read every member; members
+  // only see the public leaderboard copy (name, points, streak).
+  const leaderboardSource: { id: string; name: string; points: number; streak: number }[] = activeRole === "admin"
+    ? realMembers.filter(m => m.status !== "Pending Approval")
+    : leaderboardEntries;
+  const calculatedLeaderboard = leaderboardSource
     .map(m => ({
       name: m.name,
       points: m.points,
@@ -1887,17 +1980,17 @@ export default function App() {
     .map((item, index) => ({ ...item, rank: index + 1 }));
 
   // Admin filter members
-  const filteredAdminMembers = members.filter(m => {
+  const filteredAdminMembers = realMembers.filter(m => {
     const matchSearch = m.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) || 
                         m.memberId.toLowerCase().includes(memberSearchQuery.toLowerCase());
     return matchSearch;
   });
 
-  const activeCount = members.filter(m => m.status === "Active" || m.status === "Expiring Soon").length;
-  const expiringCount = members.filter(m => m.status === "Expiring Soon").length;
-  const pendingCount = members.filter(m => m.status === "Pending Approval").length;
+  const activeCount = realMembers.filter(m => m.status === "Active" || m.status === "Expiring Soon").length;
+  const expiringCount = realMembers.filter(m => m.status === "Expiring Soon").length;
+  const pendingCount = realMembers.filter(m => m.status === "Pending Approval").length;
   const todayString = new Date().toISOString().split("T")[0];
-  const todayAttendeesCount = members.filter(m => m.attendanceHistory?.includes(todayString)).length;
+  const todayAttendeesCount = realMembers.filter(m => m.attendanceHistory?.includes(todayString)).length;
 
   if (isLoading || authChecking) {
     return (
@@ -2503,9 +2596,11 @@ export default function App() {
                   title: "⚠️ Renewal Request Submitted",
                   message: `${currentMember.name} has requested membership renewal for: ${renewalDuration}.`,
                   type: "info",
-                  read: false
+                  read: false,
+                  forAdmin: true
                 };
                 setNotifications(prev => [renewalReqNotif, ...prev]);
+                saveDocument("notifications", renewalReqNotif);
                 triggerToast("Renewal request submitted! Awaiting owner verification. 🤝");
               }}
               className="w-full max-w-md py-4 bg-red-500 hover:bg-red-400 active:scale-[0.98] transition-all rounded-2xl font-black text-xs text-white uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer shadow-[0_8px_20px_rgba(239,68,68,0.2)] border-t border-white/20"
@@ -3329,8 +3424,8 @@ export default function App() {
                 </div>
 
                 <div className="space-y-4">
-                  {members.filter(m => m.status === "Pending Approval").length > 0 ? (
-                    members.filter(m => m.status === "Pending Approval").map(m => (
+                  {realMembers.filter(m => m.status === "Pending Approval").length > 0 ? (
+                    realMembers.filter(m => m.status === "Pending Approval").map(m => (
                       <div 
                         key={m.id}
                         className="p-5 bg-white/[0.01] border border-white/[0.04] rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-left"
@@ -4359,13 +4454,14 @@ export default function App() {
                     triggerToast("Already Checked-In for today! 🏋️");
                     return m;
                   }
-                  return {
+                  const updatedM = {
                     ...m,
                     streak: m.streak + 1,
-                    points: m.points + 100,
                     attendanceHistory: [...m.attendanceHistory, todayString],
                     absentDays: 0
                   };
+                  saveDocument("members", updatedM);
+                  return updatedM;
                 }
                 return m;
               }));
@@ -4373,13 +4469,15 @@ export default function App() {
                 id: `notif-chk-${Date.now()}`,
                 timestamp: new Date().toISOString(),
                 title: "Attendance Confirmed ✅",
-                message: "Your attendance QR scan has been successfully authenticated. Streak +1, Points +100!",
+                message: "Your attendance QR scan has been successfully authenticated. Streak +1!",
                 type: "success",
                 read: false,
-                forAdmin: false
+                forAdmin: false,
+                memberId: currentMember.id
               };
               setNotifications(prev => [checkInAlert, ...prev]);
-              triggerToast("Attendance Marked! Streak +1, Points +100 🏋️");
+              saveDocument("notifications", checkInAlert);
+              triggerToast("Attendance Marked! Streak +1 🏋️");
               setTimeout(() => setShowScanner(false), 2000);
             }}
             onExpired={() => {
@@ -4558,13 +4656,13 @@ export default function App() {
                   {activePopupType === "pending" && "Pending Approvals Queue"}
                 </span>
                 <h3 className="text-xl font-black uppercase text-white mt-1">
-                  {activePopupType === "active" && `Active Members (${members.filter(m => m.status === "Active" || m.status === "Expiring Soon").length})`}
-                  {activePopupType === "today" && `Today's Attendees (${members.filter(m => {
+                  {activePopupType === "active" && `Active Members (${realMembers.filter(m => m.status === "Active" || m.status === "Expiring Soon").length})`}
+                  {activePopupType === "today" && `Today's Attendees (${realMembers.filter(m => {
                     const todayString = new Date().toISOString().split("T")[0];
                     return m.attendanceHistory?.includes(todayString);
                   }).length})`}
-                  {activePopupType === "expiring" && `Expiring Soon (${members.filter(m => m.status === "Expiring Soon").length})`}
-                  {activePopupType === "pending" && `Pending Registrations (${members.filter(m => m.status === "Pending Approval").length})`}
+                  {activePopupType === "expiring" && `Expiring Soon (${realMembers.filter(m => m.status === "Expiring Soon").length})`}
+                  {activePopupType === "pending" && `Pending Registrations (${realMembers.filter(m => m.status === "Pending Approval").length})`}
                 </h3>
                 <p className="text-xs text-white/40 mt-1">
                   {activePopupType === "active" && "Showing all members with active access to facilities."}
@@ -4611,14 +4709,14 @@ export default function App() {
               {(() => {
                 let list: Member[] = [];
                 if (activePopupType === "active") {
-                  list = members.filter(m => m.status === "Active" || m.status === "Expiring Soon");
+                  list = realMembers.filter(m => m.status === "Active" || m.status === "Expiring Soon");
                 } else if (activePopupType === "today") {
                   const todayString = new Date().toISOString().split("T")[0];
-                  list = members.filter(m => m.attendanceHistory?.includes(todayString));
+                  list = realMembers.filter(m => m.attendanceHistory?.includes(todayString));
                 } else if (activePopupType === "expiring") {
-                  list = members.filter(m => m.status === "Expiring Soon");
+                  list = realMembers.filter(m => m.status === "Expiring Soon");
                 } else if (activePopupType === "pending") {
-                  list = members.filter(m => m.status === "Pending Approval");
+                  list = realMembers.filter(m => m.status === "Pending Approval");
                 }
 
                 if (popupSearchQuery.trim()) {
@@ -4664,6 +4762,8 @@ export default function App() {
                               onClick={() => {
                                 setInspectedMemberId(m.id);
                                 setIsInspectorOpen(true);
+                                setActivePopupType(null);
+                                setPopupSearchQuery("");
                               }}
                               className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer"
                             >
@@ -4673,6 +4773,8 @@ export default function App() {
                               onClick={() => {
                                 setAssigningMember(m);
                                 setTrainerNoteInput(`Onboarding note: Focus on ${m.goals}. Begin with basic stretching.`);
+                                setActivePopupType(null);
+                                setPopupSearchQuery("");
                               }}
                               className="px-4 py-2 bg-yellow-400 hover:bg-yellow-300 text-black font-black text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-[0_0_10px_rgba(250,204,21,0.2)]"
                             >
